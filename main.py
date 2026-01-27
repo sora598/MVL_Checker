@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import random
@@ -16,31 +17,56 @@ load_dotenv(override=True)  # ensure .env wins over OS vars like Windows USERNAM
 USERNAME = os.getenv("USERNAME")
 PASSWORD = os.getenv("PASSWORD")
 COURSE_URL = os.getenv("COURSE_URL")
+COURSE_URL_2 = os.getenv("COURSE_URL_2")
 
-if not USERNAME or not PASSWORD or not COURSE_URL:
-    raise RuntimeError("USERNAME, PASSWORD, and COURSE_URL must be set in the .env file")
+if not USERNAME or not PASSWORD or not COURSE_URL or not COURSE_URL_2:
+    raise RuntimeError("USERNAME, PASSWORD, COURSE_URL, and COURSE_URL_2 must be set in the .env file")
 
-print(f"[DEBUG] Loaded USERNAME={USERNAME}, PASSWORD length={len(PASSWORD)}")
-print(f"[DEBUG] COURSE_URL={COURSE_URL}")
 LOGIN_URL = "https://www.slu.myvirtuallearning.org/login/index.php"
 LAST_RUN_FILE = "last_run.txt"
+LOG_FILE = "mvl.log"
+LOG_MAX_SIZE = 10 * 1024 * 1024  # 10 MB
 MINUTES_TO_STAY = random.randint(3, 8)
-print(f"[DEBUG] Stay duration selected: {MINUTES_TO_STAY} minutes")
+TOTAL_SECONDS = MINUTES_TO_STAY * 60
+FIRST_WAIT = TOTAL_SECONDS // 2
+SECOND_WAIT = TOTAL_SECONDS - FIRST_WAIT
+
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+logging.info("Loaded USERNAME=%s, PASSWORD length=%s", USERNAME, len(PASSWORD))
+logging.info("COURSE_URL=%s", COURSE_URL)
+logging.info("COURSE_URL_2=%s", COURSE_URL_2)
+logging.info("Total stay selected: %s minutes (%s s first, %s s second)", MINUTES_TO_STAY, FIRST_WAIT, SECOND_WAIT)
+
+# ===== CLEANUP LOG FILE =====
+def check_and_cleanup_log():
+    if os.path.exists(LOG_FILE):
+        log_size = os.path.getsize(LOG_FILE)
+        if log_size > LOG_MAX_SIZE:
+            try:
+                os.remove(LOG_FILE)
+                print(f"Log file exceeded {LOG_MAX_SIZE / (1024*1024):.1f}MB; deleted")
+            except Exception as exc:
+                print(f"Failed to delete log file: {exc}")
 
 # ===== CHECK INTERNET =====
 def has_internet():
     try:
         requests.get("https://www.google.com", timeout=5)
-        print("[DEBUG] Internet check: OK")
+        logging.info("Internet check: OK")
         return True
-    except:
-        print("[DEBUG] Internet check: FAILED")
+    except Exception as exc:
+        logging.warning("Internet check failed: %s", exc)
         return False
 
 # ===== CHECK 10-DAY CONDITION =====
 def can_run():
     if not os.path.exists(LAST_RUN_FILE):
-        print("[DEBUG] No last_run file; creating and allowing run")
+        logging.info("No last_run file; creating and allowing run")
         save_run_time()
         return True
 
@@ -48,7 +74,7 @@ def can_run():
         last = datetime.fromisoformat(f.read().strip())
 
     allowed = datetime.now() - last >= timedelta(days=5)
-    print(f"[DEBUG] Last run: {last.isoformat()} | Allowed now: {allowed}")
+    logging.info("Last run: %s | Allowed now: %s", last.isoformat(), allowed)
     return allowed
 
 # ===== SAVE RUN DATE =====
@@ -61,15 +87,15 @@ def run():
     options = webdriver.ChromeOptions()
     options.add_argument("--start-maximized")
     options.add_argument("--headless=new")
-    print("[DEBUG] Running in headless mode")
+    logging.info("Running in headless mode")
 
-    print("[DEBUG] Initializing Chrome driver")
+    logging.info("Initializing Chrome driver")
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
     try:
         driver.get(LOGIN_URL)
-        print("[DEBUG] Opened login page")
+        logging.info("Opened login page")
         time.sleep(3)
 
         # Find fields
@@ -79,27 +105,39 @@ def run():
         user_input.send_keys(USERNAME)
         pass_input.send_keys(PASSWORD)
         pass_input.send_keys(Keys.RETURN)
-        print("[DEBUG] Submitted login form")
+        logging.info("Submitted login form")
 
         time.sleep(5)
 
         # Go to course
         driver.get(COURSE_URL)
-        print("[DEBUG] Opened course page")
+        logging.info("Opened primary course page: %s", COURSE_URL)
 
-        # Stay 3-8 minutes
-        time.sleep(MINUTES_TO_STAY * 60)
-        print("[DEBUG] Completed stay")
+        # Stay half the total duration on primary
+        time.sleep(FIRST_WAIT)
+        logging.info("Completed primary stay (%s seconds)", FIRST_WAIT)
+
+        # Visit secondary course page
+        driver.get(COURSE_URL_2)
+        logging.info("Opened secondary course page: %s", COURSE_URL_2)
+
+        # Stay remaining half on secondary
+        time.sleep(SECOND_WAIT)
+        logging.info("Completed secondary stay (%s seconds)", SECOND_WAIT)
 
     finally:
-        print("[DEBUG] Quitting driver and saving run time")
+        logging.info("Quitting driver and saving run time")
         driver.quit()
         save_run_time()
 
 # ===== MAIN LOGIC =====
 if __name__ == "__main__":
-    if has_internet() and can_run():
-        print("[DEBUG] Conditions met; starting run()")
-        run()
-    else:
-        print("Condition not met: either no internet or 10 days not passed.")
+    try:
+        check_and_cleanup_log()
+        if has_internet() and can_run():
+            logging.info("Conditions met; starting run()")
+            run()
+        else:
+            logging.info("Condition not met: either no internet or 10 days not passed.")
+    except Exception:
+        logging.exception("Unhandled error during execution")

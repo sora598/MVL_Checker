@@ -9,7 +9,8 @@ Automated login and attendance tracker for MyVirtualLearning platform. This scri
 - Random 3-8 minute session duration
 - 5-day cooldown between runs
 - Internet connectivity check before execution
-- Debug logging for troubleshooting
+- File logging to `mvl.log` for troubleshooting
+- Visits two configured course pages, splitting the total stay evenly
 
 ## Requirements
 
@@ -44,6 +45,7 @@ pip install requests selenium webdriver-manager python-dotenv
 USERNAME=your_student_id
 PASSWORD=your_password
 COURSE_URL=https://www.slu.myvirtuallearning.org/course/view.php?id=YOUR_COURSE_ID
+COURSE_URL_2=https://www.slu.myvirtuallearning.org/course/view.php?id=YOUR_SECOND_COURSE_ID
 ```
 
 2. Replace the values with your actual credentials:
@@ -72,6 +74,7 @@ On first execution, the script will:
 - Create `last_run.txt` to track execution history
 - Perform the login and course navigation
 - Stay active for 3-8 minutes (randomly chosen)
+- Split the total stay evenly between the two course URLs
 
 ### Subsequent Runs
 
@@ -96,6 +99,8 @@ Condition not met: either no internet or 5 days not passed.
 6. Arguments: `C:\path\to\main.py`
 7. Start in: `C:\path\to\project`
 
+To run without a visible console, use `pythonw.exe` as the program. Logs will still write to `mvl.log` in the project folder.
+
 ### Linux/macOS Cron
 
 Add to crontab:
@@ -105,14 +110,14 @@ Add to crontab:
 
 ## Debug Output
 
-The script includes debug statements that show:
+All activity and errors are written to `mvl.log` in the project root. Key entries include:
 - Loaded credentials (password length only, not actual value)
 - Random session duration selected
 - Internet connectivity status
 - Last run timestamp and eligibility
 - Chrome driver initialization
 - Page navigation steps
-- Session completion
+- Session completion and any unhandled exceptions
 
 ## Troubleshooting
 
