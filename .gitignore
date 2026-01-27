@@ -11,6 +11,12 @@ __pycache__/
 # Run tracking
 last_run.txt
 
+# Build and compiled files
+build/
+main.spec
+*.exe
+*.log
+
 # IDE
 .vscode/
 .idea/
