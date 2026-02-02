@@ -87,17 +87,18 @@ def save_run_time():
 # ===== AUTOMATION =====
 def run():
     options = webdriver.ChromeOptions()
-    options.add_argument("--start-maximized")
-    # options.add_argument("--headless=new")  # Disabled - Chrome crashes in headless on this system
+    options.add_argument("--headless=new")
+    options.add_argument("--window-size=1920,1080")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36")
-    logging.info("Running in visible mode (Chrome headless crashes on this system)")
+    logging.info("Running in headless mode (with anti-bot and explicit waits)")
 
-    logging.info("Initializing Chrome driver")
+    logging.info("Initializing Chrome driver with webdriver-manager")
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     wait = WebDriverWait(driver, 20)
@@ -106,35 +107,60 @@ def run():
         driver.get(LOGIN_URL)
         logging.info("Opened login page")
 
-        # Use explicit waits instead of sleep
+        # Use explicit waits for visibility and enter credentials
         user_input = wait.until(EC.visibility_of_element_located((By.ID, "username")))
-        pass_input = wait.until(EC.visibility_of_element_located((By.ID, "password")))
-        logging.info("Found username and password fields")
-
+        user_input.clear()
         user_input.send_keys(USERNAME)
-        pass_input.send_keys(PASSWORD)
+        logging.info("Entered username")
         
-        # Submit the form directly instead of clicking button
-        try:
-            login_form = driver.find_element(By.ID, "login")
-            driver.execute_script("arguments[0].submit();", login_form)
-            logging.info("Submitted login form using JavaScript")
-        except Exception as e:
-            logging.error("Failed to submit form: %s", e)
-            raise
+        # Wait a moment and refind password field to avoid stale element
+        time.sleep(0.5)
+        pass_input = wait.until(EC.visibility_of_element_located((By.ID, "password")))
+        pass_input.clear()
+        pass_input.send_keys(PASSWORD)
+        logging.info("Entered password")
 
-        # Wait for navigation to complete
-        wait.until(EC.url_changes(LOGIN_URL))
+        # Try JavaScript click on login button as fallback
+        try:
+            submit_btn = wait.until(EC.element_to_be_clickable((By.ID, "loginbtn")))
+            driver.execute_script("arguments[0].click();", submit_btn)
+            logging.info("Clicked login button with JS")
+        except Exception as e:
+            try:
+                login_form = driver.find_element(By.ID, "login")
+                driver.execute_script("arguments[0].submit();", login_form)
+                logging.info("Submitted login form using JavaScript fallback")
+            except Exception as e2:
+                logging.error("Failed to submit form: %s, fallback: %s", e, e2)
+                raise
+
+        # Wait for navigation to complete (URL change or dashboard loaded)
+        try:
+            wait.until(lambda d: d.current_url != LOGIN_URL or "dashboard" in d.current_url)
+        except Exception as e:
+            logging.warning("URL did not change after login: %s", e)
         logging.info("Current URL after login: %s", driver.current_url)
 
-        # Go to course
-        try:
-            driver.get(COURSE_URL)
-            logging.info("Opened primary course page: %s", COURSE_URL)
-            logging.info("Current URL: %s", driver.current_url)
-        except Exception as e:
-            logging.error("Failed to open primary course: %s", e)
-            raise
+        # Save screenshot and HTML for debugging
+        driver.save_screenshot("headless_debug.png")
+        with open("headless_debug.html", "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+
+
+        # Go to course with retry
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                driver.get(COURSE_URL)
+                logging.info(f"Opened primary course page: {COURSE_URL} (Attempt {attempt})")
+                logging.info(f"Current URL: {driver.current_url}")
+                break
+            except Exception as e:
+                logging.error(f"Failed to open primary course (Attempt {attempt}): {e}")
+                if attempt < max_retries:
+                    time.sleep(3)
+                else:
+                    raise
 
         # Stay half the total duration on primary
         logging.info("Staying on primary course for %s seconds", FIRST_WAIT)
