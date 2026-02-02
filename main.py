@@ -8,6 +8,8 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from dotenv import load_dotenv
 
@@ -28,8 +30,8 @@ LOG_FILE = "mvl.log"
 LOG_MAX_SIZE = 10 * 1024 * 1024  # 10 MB
 MINUTES_TO_STAY = random.randint(3, 8)
 TOTAL_SECONDS = MINUTES_TO_STAY * 60
-FIRST_WAIT = TOTAL_SECONDS // 2
-SECOND_WAIT = TOTAL_SECONDS - FIRST_WAIT
+FIRST_WAIT = int((TOTAL_SECONDS // 2) * random.uniform(1.2, 1.5))
+SECOND_WAIT = int((TOTAL_SECONDS // 2) * random.uniform(1.2, 1.5))
 
 logging.basicConfig(
     filename=LOG_FILE,
@@ -40,7 +42,7 @@ logging.basicConfig(
 logging.info("Loaded USERNAME=%s, PASSWORD length=%s", USERNAME, len(PASSWORD))
 logging.info("COURSE_URL=%s", COURSE_URL)
 logging.info("COURSE_URL_2=%s", COURSE_URL_2)
-logging.info("Total stay selected: %s minutes (%s s first, %s s second)", MINUTES_TO_STAY, FIRST_WAIT, SECOND_WAIT)
+logging.info("First wait: %s seconds, Second wait: %s seconds (Total: %s minutes)", FIRST_WAIT, SECOND_WAIT, (FIRST_WAIT + SECOND_WAIT) / 60)
 
 # ===== CLEANUP LOG FILE =====
 def check_and_cleanup_log():
@@ -86,35 +88,64 @@ def save_run_time():
 def run():
     options = webdriver.ChromeOptions()
     options.add_argument("--start-maximized")
-    options.add_argument("--headless=new")
-    logging.info("Running in headless mode")
+    # options.add_argument("--headless=new")  # Disabled - Chrome crashes in headless on this system
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36")
+    logging.info("Running in visible mode (Chrome headless crashes on this system)")
 
     logging.info("Initializing Chrome driver")
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    wait = WebDriverWait(driver, 20)
 
     try:
         driver.get(LOGIN_URL)
         logging.info("Opened login page")
-        time.sleep(3)
 
-        # Find fields
-        user_input = driver.find_element(By.ID, "username")
-        pass_input = driver.find_element(By.ID, "password")
+        # Use explicit waits instead of sleep
+        user_input = wait.until(EC.visibility_of_element_located((By.ID, "username")))
+        pass_input = wait.until(EC.visibility_of_element_located((By.ID, "password")))
+        logging.info("Found username and password fields")
 
         user_input.send_keys(USERNAME)
         pass_input.send_keys(PASSWORD)
-        pass_input.send_keys(Keys.RETURN)
-        logging.info("Submitted login form")
+        
+        # Submit the form directly instead of clicking button
+        try:
+            login_form = driver.find_element(By.ID, "login")
+            driver.execute_script("arguments[0].submit();", login_form)
+            logging.info("Submitted login form using JavaScript")
+        except Exception as e:
+            logging.error("Failed to submit form: %s", e)
+            raise
 
-        time.sleep(5)
+        # Wait for navigation to complete
+        wait.until(EC.url_changes(LOGIN_URL))
+        logging.info("Current URL after login: %s", driver.current_url)
 
         # Go to course
-        driver.get(COURSE_URL)
-        logging.info("Opened primary course page: %s", COURSE_URL)
+        try:
+            driver.get(COURSE_URL)
+            logging.info("Opened primary course page: %s", COURSE_URL)
+            logging.info("Current URL: %s", driver.current_url)
+        except Exception as e:
+            logging.error("Failed to open primary course: %s", e)
+            raise
 
         # Stay half the total duration on primary
-        time.sleep(FIRST_WAIT)
+        logging.info("Staying on primary course for %s seconds", FIRST_WAIT)
+        for i in range(FIRST_WAIT):
+            time.sleep(1)
+            # Keep connection alive by checking status every 10 seconds
+            if i % 10 == 0:
+                try:
+                    driver.title  # Just access a property to keep connection alive
+                except:
+                    pass
         logging.info("Completed primary stay (%s seconds)", FIRST_WAIT)
 
         # Visit secondary course page
@@ -122,9 +153,20 @@ def run():
         logging.info("Opened secondary course page: %s", COURSE_URL_2)
 
         # Stay remaining half on secondary
-        time.sleep(SECOND_WAIT)
+        logging.info("Staying on secondary course for %s seconds", SECOND_WAIT)
+        for i in range(SECOND_WAIT):
+            time.sleep(1)
+            # Keep connection alive by checking status every 10 seconds
+            if i % 10 == 0:
+                try:
+                    driver.title  # Just access a property to keep connection alive
+                except:
+                    pass
         logging.info("Completed secondary stay (%s seconds)", SECOND_WAIT)
 
+    except Exception as e:
+        logging.error("Error during automation: %s", e, exc_info=True)
+        raise
     finally:
         logging.info("Quitting driver and saving run time")
         driver.quit()
